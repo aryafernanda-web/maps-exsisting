@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fiber Customer Maps — FTTH Coverage</title>
+    <meta name="description" content="Peta pelanggan fiber FTTH real-time. Visualisasi lokasi pelanggan dan area cakupan jaringan.">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <!-- App CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── TOP BAR ──────────────────────────────────────────── -->
+<div id="top-bar">
+    <div id="search-box">
+        <span class="material-icons-round search-icon">wifi_tethering</span>
+        <div id="search-content">
+            <span id="app-title">Fiber Customer Maps</span>
+            <span id="app-subtitle">
+                <span class="dot-live"></span>Real-time · Notion Sync
+            </span>
+        </div>
+        <div id="status-pill" class="loading">
+            <span class="material-icons-round status-icon">sync</span>
+            <span id="status-text">Memuat...</span>
+        </div>
+    </div>
+</div>
+
+<!-- ── CUSTOMER SEARCH ────────────────────────────────────── -->
+<div id="customer-search-wrap">
+    <div id="customer-search-box">
+        <span class="material-icons-round" id="customer-search-icon">person_search</span>
+        <input
+            type="text"
+            id="customer-search-input"
+            placeholder="Cari nama pelanggan..."
+            autocomplete="off"
+            spellcheck="false"
+        />
+        <button id="customer-search-clear" title="Hapus pencarian" class="hidden">
+            <span class="material-icons-round">close</span>
+        </button>
+    </div>
+    <div id="customer-search-results" class="hidden"></div>
+</div>
+
+<!-- ── MAP ──────────────────────────────────────────────── -->
+<div id="map"></div>
+
+<!-- ── LOADING OVERLAY ──────────────────────────────────── -->
+<div id="loader-overlay">
+    <div id="loader-card">
+        <div class="gmap-loader">
+            <div class="dot dot1"></div>
+            <div class="dot dot2"></div>
+            <div class="dot dot3"></div>
+            <div class="dot dot4"></div>
+        </div>
+        <div id="loader-title">Mengambil data pelanggan...</div>
+        <div id="loader-sub">Menghubungkan ke Notion</div>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+    </div>
+</div>
+
+<!-- ── INFO PANEL ───────────────────────────────────────── -->
+<div id="info-panel" class="hidden">
+    <div id="panel-header">
+        <div id="panel-header-content">
+            <span class="material-icons-round" style="color:rgba(255,255,255,0.8);font-size:20px">place</span>
+            <span id="panel-header-title">Detail Pelanggan</span>
+        </div>
+        <button id="panel-close" title="Tutup"><span class="material-icons-round">close</span></button>
+    </div>
+    <div id="panel-body">
+        <div id="panel-name"></div>
+        <div id="panel-badges">
+            <span id="panel-status" class="status-badge" style="display:none"></span>
+            <span id="panel-coverage" class="panel-coverage unknown">Unknown</span>
+        </div>
+        <div id="panel-paket"></div>
+        <div id="panel-address"></div>
+        <div id="panel-phone"></div>
+        <div id="panel-coords"></div>
+
+        <!-- Mini Map + Street View -->
+        <div id="panel-mini-map-wrap">
+            <div id="panel-mini-map-label">
+                <span class="material-icons-round">map</span>
+                <span>Lokasi di Google Maps</span>
+            </div>
+            <div id="panel-mini-map"></div>
+            <div id="panel-mini-map-tabs">
+                <button class="map-tab active" data-mode="roadmap">
+                    <span class="material-icons-round">map</span> Peta
+                </button>
+                <button class="map-tab" data-mode="streetview">
+                    <span class="material-icons-round">streetview</span> Street View
+                </button>
+            </div>
+        </div>
+
+        <div id="panel-map-actions">
+            <a id="btn-gmaps" class="action-btn primary" target="_blank" rel="noopener">
+                <span class="material-icons-round">open_in_new</span> Google Maps
+            </a>
+            <a id="btn-directions" class="action-btn secondary" target="_blank" rel="noopener">
+                <span class="material-icons-round">directions</span> Rute
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- ── STAT BAR ─────────────────────────────────────────── -->
+<div id="stat-bar">
+    <span class="material-icons-round" style="color:#1a73e8;font-size:18px">person_pin</span>
+    <span id="stat-count">0</span> pelanggan
+    <span id="coverage-badge" class="cov-badge hidden"></span>
+    <span id="blank-badge" class="blank-badge hidden" title="Jumlah Costumer yang kolom maps-nya masih KOSONG di Notion"></span>
+    <span id="auto-refresh-badge" title="Auto-refresh setiap 5 menit">
+        <span class="material-icons-round live-icon">fiber_manual_record</span>
+    </span>
+</div>
+
+<!-- ── FAB REFRESH ──────────────────────────────────────── -->
+<button id="fab-refresh" title="Refresh data sekarang">
+    <span class="material-icons-round">refresh</span>
+</button>
+
+<!-- ── LAYER CONTROL ────────────────────────────────────── -->
+<div id="layer-ctrl">
+    <button class="layer-btn active" id="layer-road" title="Peta Jalan">
+        <span class="material-icons-round">map</span>
+    </button>
+    <button class="layer-btn" id="layer-satellite" title="Satelit">
+        <span class="material-icons-round">satellite_alt</span>
+    </button>
+    <button class="layer-btn" id="layer-hybrid" title="Hybrid">
+        <span class="material-icons-round">layers</span>
+    </button>
+    <div class="layer-divider"></div>
+    <button class="layer-btn active" id="toggle-coverage" title="Area Coverage FTTH (DP & Garis Fiber)">
+        <span class="material-icons-round">cell_tower</span>
+    </button>
+</div>
+
+<!-- Scripts -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

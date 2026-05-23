@@ -1,0 +1,31 @@
+node_modules/
+.env
+.env.local
+.netlify/
+*.log
+cache_maps.json
+status.json
+.node/
+dev-server.js
+
+# Cache files
+coords_cache.json
+coords_cache_direct.json
+
+# Data dump files (sensitif & besar)
+notion_dump.json
+all_maps.txt
+
+# File test & debug
+test_maps_html.html
+debug_notion.js
+
+# Script utility lokal (tidak dibutuhkan di server)
+check_coords.ps1
+check_costumer_coverage.ps1
+geocode_missing.ps1
+resolve_get.ps1
+resolve_html.ps1
+resolve_missing.ps1
+resolve_missing2.ps1
+resolve_urls.ps1

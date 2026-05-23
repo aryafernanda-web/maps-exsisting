@@ -1,0 +1,12 @@
+all_maps.txt
+DEPLOY_NETLIFY.md
+DEPLOY_VERCEL.bat
+.env
+debug_notion.js
+config.json
+node_modules
+.node/
+coords_cache.json
+coords_cache_direct.json
+notion_dump.json
+dev-server.js
