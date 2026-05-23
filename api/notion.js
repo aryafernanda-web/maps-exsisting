@@ -287,6 +287,13 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') return res.status(204).end();
 
+    // ── Cek API Key ────────────────────────────────────────────
+    if (!NOTION_API_KEY) {
+        return res.status(500).json({
+            error: 'NOTION_API_KEY belum diset. Tambahkan environment variable di Vercel Dashboard: Settings → Environment Variables.'
+        });
+    }
+
     // ── MODE POST: Resolve URL batch ──────────────────────────
     if (req.method === 'POST') {
         try {
