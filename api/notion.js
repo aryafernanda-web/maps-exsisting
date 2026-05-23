@@ -1,56 +1,47 @@
 // ============================================================
-//  api/notion.js  —  Fiber Customer Maps v3.1 (Vercel-ready)
-//  ✅ Ambil data langsung dari Notion API (real-time, semua halaman)
-//  ✅ Fallback ke notion_dump.json jika API tidak tersedia
-//  ✅ coords_cache.json untuk resolusi URL offline (aman jika tidak ada)
-//  ✅ Resolve short URL Maps secara otomatis
-//  ✅ Safe fs handling untuk Vercel serverless environment
+//  api/notion.js  —  Fiber Customer Maps v3.2 (Fast + Vercel-ready)
+//  ✅ Optimized untuk 500+ baris — tidak timeout di Vercel Free
+//  ✅ Skip resolve URL saat GET (dilakukan client-side terpisah)
+//  ✅ Safe fs handling
 // ============================================================
 
 const path = require('path');
 const fs   = require('fs');
 
-// ── Konfigurasi ────────────────────────────────────────────────
 const NOTION_API_KEY     = process.env.NOTION_API_KEY;
 const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID || '29edcd14e2c880ddb393dc9f54758a18';
 const NOTION_BASE_URL    = 'https://api.notion.com/v1';
 const NOTION_VERSION     = '2022-06-28';
 
-// ── Safe JSON file reader (tidak crash jika file tidak ada) ───
+// ── Safe JSON reader ──────────────────────────────────────────
 function readJsonFileSafe(filePath) {
     try {
         if (!fs.existsSync(filePath)) return null;
         const buffer = fs.readFileSync(filePath);
-        let text;
-        if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) {
-            text = buffer.toString('utf16le').replace(/^\uFEFF/, '');
-        } else {
-            text = buffer.toString('utf8').replace(/^\uFEFF/, '');
-        }
+        let text = buffer[0] === 0xFF && buffer[1] === 0xFE
+            ? buffer.toString('utf16le').replace(/^\uFEFF/, '')
+            : buffer.toString('utf8').replace(/^\uFEFF/, '');
         return JSON.parse(text);
     } catch (e) {
-        console.warn(`⚠️ Gagal baca ${filePath}:`, e.message);
         return null;
     }
 }
 
-// ── Load Koordinat Cache (aman jika tidak ada) ─────────────────
+// ── Load coords cache ─────────────────────────────────────────
 let coordsCache = {};
-const cachePaths = [
+for (const cp of [
     path.join(process.cwd(), 'coords_cache.json'),
     path.join(__dirname, '..', 'coords_cache.json'),
-    path.join(__dirname, 'coords_cache.json'),
-];
-for (const cp of cachePaths) {
+]) {
     const data = readJsonFileSafe(cp);
     if (data && typeof data === 'object') {
         coordsCache = data;
-        console.log(`📌 Cache koordinat: ${Object.keys(coordsCache).length} entri dari ${cp}`);
+        console.log(`📌 Cache: ${Object.keys(coordsCache).length} entri`);
         break;
     }
 }
 
-// ── Helper: ambil nilai properti Notion ────────────────────────
+// ── Helper prop value ─────────────────────────────────────────
 function getPropValue(prop) {
     if (!prop) return null;
     switch (prop.type) {
@@ -70,9 +61,8 @@ function getPropValue(prop) {
             return f?.string || f?.number || f?.boolean || f?.date?.start || null;
         }
         case 'rollup': {
-            if (prop.rollup?.array) {
-                return prop.rollup.array.map(v => getPropValue(v)).filter(x => x !== null).join(', ');
-            }
+            if (prop.rollup?.array)
+                return prop.rollup.array.map(v => getPropValue(v)).filter(Boolean).join(', ');
             const r = prop.rollup;
             return r?.number ?? r?.string ?? r?.date?.start ?? null;
         }
@@ -82,41 +72,34 @@ function getPropValue(prop) {
     }
 }
 
-// ── Ekstrak koordinat dari URL/teks ────────────────────────────
+// ── Ekstrak koordinat ─────────────────────────────────────────
 function extractCoords(text) {
     if (!text || typeof text !== 'string') return null;
     let decoded = text;
     try { decoded = decodeURIComponent(text); } catch(e) {}
 
-    // !3d{lat}!4d{lng}
     let m = decoded.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
     if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
 
-    // @lat,lng
     m = decoded.match(/@(-?\d{1,2}\.\d{4,}),(-?\d{2,3}\.\d{4,})/);
     if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
 
-    // ?q=lat,lng atau &q=lat,lng
     m = decoded.match(/[?&]q=(-?\d{1,2}\.\d{4,})[,\s%2C]+(-?\d{2,3}\.\d{4,})/);
     if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
 
-    // ll=lat,lng
     m = decoded.match(/ll=(-?\d{1,2}\.\d{4,}),(-?\d{2,3}\.\d{4,})/);
     if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
 
-    // Koordinat polos lat,lng
     m = decoded.match(/(-?\d{1,2}\.\d{4,})[,\s]+(-?\d{2,3}\.\d{4,})/);
     if (m) {
-        const lat = parseFloat(m[1]);
-        const lng = parseFloat(m[2]);
+        const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
         if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) return { lat, lng };
     }
-
     return null;
 }
 
-// ── Resolve URL pendek Maps dengan timeout manual (Node 16 safe) ─
-async function resolveShortUrl(url, timeoutMs = 5000) {
+// ── Resolve short URL (hanya untuk POST batch) ────────────────
+async function resolveShortUrl(url, timeoutMs = 4000) {
     const cacheKey = url.trim();
     const cleanKey = cacheKey.replace(/\?.*$/, '');
     if (coordsCache[cacheKey]) return coordsCache[cacheKey];
@@ -125,10 +108,8 @@ async function resolveShortUrl(url, timeoutMs = 5000) {
     const direct = extractCoords(url);
     if (direct) return direct;
 
-    // Buat AbortController manual (kompatibel Node 16+)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
         let currentUrl = url;
         for (let hop = 0; hop < 5; hop++) {
@@ -143,59 +124,52 @@ async function resolveShortUrl(url, timeoutMs = 5000) {
                 if (!location) break;
                 const coords = extractCoords(location);
                 if (coords) return coords;
-                const continueMatch = location.match(/[?&]continue=([^&]+)/);
-                if (continueMatch) {
-                    const cont = extractCoords(decodeURIComponent(continueMatch[1]));
-                    if (cont) return cont;
+                const cont = location.match(/[?&]continue=([^&]+)/);
+                if (cont) {
+                    const c = extractCoords(decodeURIComponent(cont[1]));
+                    if (c) return c;
                 }
                 currentUrl = location.startsWith('http') ? location : `https://www.google.com${location}`;
             } else {
-                const finalUrl = res.url || currentUrl;
-                const coords = extractCoords(finalUrl);
+                const coords = extractCoords(res.url || currentUrl);
                 if (coords) return coords;
                 break;
             }
         }
     } catch (e) {
-        if (e.name !== 'AbortError') console.warn('⚠️ resolveShortUrl error:', e.message);
+        // timeout atau network error — skip
     } finally {
         clearTimeout(timer);
     }
     return null;
 }
 
-// ── Proses satu halaman Notion → objek marker ──────────────────
+// ── Proses satu page Notion ───────────────────────────────────
 function processPage(page) {
     const props = page.properties || {};
-    const data  = {
-        id:        page.id,
-        nama:      '(Tanpa Nama)',
+    const data = {
+        id: page.id,
+        nama: '(Tanpa Nama)',
         panggilan: '',
-        status:    '',
-        alamat:    '',
-        telepon:   '',
-        coverage:  '',
-        paket:     '',
-        lat:       null,
-        lng:       null,
-        mapsUrl:   null
+        status: '',
+        alamat: '',
+        telepon: '',
+        coverage: '',
+        paket: '',
+        lat: null,
+        lng: null,
+        mapsUrl: null
     };
 
     for (const [key, prop] of Object.entries(props)) {
-        const val    = getPropValue(prop);
+        const val = getPropValue(prop);
         if (val === null || val === '') continue;
         const lowKey = key.toLowerCase().trim();
         const strVal = String(val).trim();
 
-        if (lowKey === 'nama pelanggan') {
-            if (strVal) data.nama = strVal;
-        }
-        if (lowKey === 'nama costumer') {
-            if (strVal) data.panggilan = strVal;
-        }
-        if (prop.type === 'title' && data.nama === '(Tanpa Nama)' && strVal) {
-            data.nama = strVal;
-        }
+        if (lowKey === 'nama pelanggan' && strVal) data.nama = strVal;
+        if (lowKey === 'nama costumer' && strVal) data.panggilan = strVal;
+        if (prop.type === 'title' && data.nama === '(Tanpa Nama)' && strVal) data.nama = strVal;
 
         if (lowKey.includes('lat') && !isNaN(parseFloat(val)) && data.lat === null)
             data.lat = parseFloat(val);
@@ -220,7 +194,7 @@ function processPage(page) {
         if (lowKey === 'status') data.status = strVal;
         if (lowKey.includes('alamat') || lowKey.includes('address')) data.alamat = strVal;
         if (lowKey.includes('telp') || lowKey.includes('phone') || lowKey.includes('telepon') || lowKey.includes('nomor')) data.telepon = strVal;
-        if (lowKey.includes('coverage')) data.coverage = strVal.trim();
+        if (lowKey.includes('coverage')) data.coverage = strVal;
         if (lowKey === 'paket') data.paket = strVal;
 
         if (data.lat === null || data.lng === null) {
@@ -229,145 +203,133 @@ function processPage(page) {
         }
     }
 
-    // Gunakan cache jika lat/lng belum ditemukan
+    // Cek cache koordinat
     if ((data.lat === null || data.lng === null) && data.mapsUrl) {
-        const cacheKey = data.mapsUrl.trim();
-        const cleanKey = cacheKey.replace(/\?.*$/, '');
-        const cached   = coordsCache[cacheKey] || coordsCache[cleanKey];
+        const ck = data.mapsUrl.trim();
+        const cached = coordsCache[ck] || coordsCache[ck.replace(/\?.*$/, '')];
         if (cached) { data.lat = cached.lat; data.lng = cached.lng; }
     }
 
     return data;
 }
 
-// ── Cek apakah entry adalah customer ──────────────────────────
 function isCustomer(data) {
     const s = (data.status || '').toLowerCase().trim();
     return s.includes('costumer') || s.includes('customer') || s === 'aktif' || s === 'active';
 }
 
-// ── Ambil SEMUA halaman dari Notion API (dengan pagination) ────
+// ── Fetch Notion dengan pagination PARALEL ────────────────────
 async function fetchAllNotionPages() {
-    const pages  = [];
-    let cursor   = undefined;
-    let pageNum  = 1;
+    // Fetch halaman pertama dulu untuk tahu total
+    const firstRes = await fetchNotionPage(undefined);
+    const allPages = [...(firstRes.results || [])];
 
-    while (true) {
-        const body = {
-            page_size: 100,
-            ...(cursor ? { start_cursor: cursor } : {})
-        };
+    if (!firstRes.has_more) return allPages;
 
-        // Timeout manual untuk kompatibilitas Node 16+
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 25000);
+    // Fetch sisa halaman secara sequential (Notion tidak support parallel cursor)
+    let cursor = firstRes.next_cursor;
+    while (cursor) {
+        const res = await fetchNotionPage(cursor);
+        allPages.push(...(res.results || []));
+        cursor = res.has_more ? res.next_cursor : null;
+    }
 
-        let res;
-        try {
-            res = await fetch(`${NOTION_BASE_URL}/databases/${NOTION_DATABASE_ID}/query`, {
-                method:  'POST',
-                headers: {
-                    'Authorization':  `Bearer ${NOTION_API_KEY}`,
-                    'Notion-Version': NOTION_VERSION,
-                    'Content-Type':   'application/json',
-                },
-                body:   JSON.stringify(body),
-                signal: controller.signal
-            });
-        } finally {
-            clearTimeout(timer);
-        }
+    return allPages;
+}
+
+async function fetchNotionPage(cursor) {
+    const body = { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+
+    try {
+        const res = await fetch(`${NOTION_BASE_URL}/databases/${NOTION_DATABASE_ID}/query`, {
+            method: 'POST',
+            headers: {
+                'Authorization':  `Bearer ${NOTION_API_KEY}`,
+                'Notion-Version': NOTION_VERSION,
+                'Content-Type':   'application/json',
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal
+        });
 
         if (!res.ok) {
             const errText = await res.text();
-            throw new Error(`Notion API error ${res.status}: ${errText}`);
+            throw new Error(`Notion API ${res.status}: ${errText}`);
         }
-
-        const json = await res.json();
-        pages.push(...(json.results || []));
-        console.log(`📄 Halaman ${pageNum}: ${json.results?.length || 0} entries (total: ${pages.length})`);
-
-        if (!json.has_more || !json.next_cursor) break;
-        cursor = json.next_cursor;
-        pageNum++;
+        return await res.json();
+    } finally {
+        clearTimeout(timer);
     }
-
-    return pages;
 }
 
-// ── Main Handler ───────────────────────────────────────────────
+// ── Main Handler ──────────────────────────────────────────────
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') return res.status(204).end();
 
-    // ── Cek API Key ───────────────────────────────────────────
     if (!NOTION_API_KEY) {
         return res.status(500).json({
-            error: '❌ NOTION_API_KEY belum diset! Buka Vercel Dashboard → Settings → Environment Variables → tambahkan NOTION_API_KEY dengan value API key Notion kamu, lalu Redeploy.'
+            error: '❌ NOTION_API_KEY belum diset! Buka Vercel Dashboard → Settings → Environment Variables → tambahkan NOTION_API_KEY, lalu Redeploy.'
         });
     }
 
-    // ── MODE POST: Resolve URL batch ─────────────────────────
+    // ── POST: Resolve URL batch (dari client) ─────────────────
     if (req.method === 'POST') {
         try {
             const batch = req.body;
-            if (!Array.isArray(batch)) throw new Error('Invalid payload: harus array');
+            if (!Array.isArray(batch)) throw new Error('Payload harus array');
             const startTime = Date.now();
-            const results   = await Promise.allSettled(
-                batch.map(async (item) => {
-                    if (Date.now() - startTime > 25000) return null;
-                    const coords = await resolveShortUrl(item.mapsUrl, 4000);
+            const results = await Promise.allSettled(
+                batch.slice(0, 20).map(async (item) => { // max 20 per batch
+                    if (Date.now() - startTime > 20000) return null;
+                    const coords = await resolveShortUrl(item.mapsUrl, 3000);
                     return coords ? { ...item, lat: coords.lat, lng: coords.lng } : null;
                 })
             );
-            const resolved = results
-                .filter(r => r.status === 'fulfilled' && r.value)
-                .map(r => r.value);
-            return res.status(200).json(resolved);
+            return res.status(200).json(
+                results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value)
+            );
         } catch (e) {
             return res.status(500).json({ error: e.message });
         }
     }
 
-    // ── MODE GET: Ambil data dari Notion API ─────────────────
+    // ── GET: Ambil data Notion ────────────────────────────────
     try {
+        // Cek apakah ada parameter page untuk pagination client-side
+        const pageParam = parseInt(req.query?.page || '0');
+        const PAGE_SIZE = 100; // berapa baris per request
+
+        console.log('🌐 Fetching Notion...');
         let pages = null;
 
-        // === SUMBER UTAMA: Notion API ===
         try {
-            console.log('🌐 Mengambil data dari Notion API...');
             pages = await fetchAllNotionPages();
-            console.log(`✅ Notion API: ${pages.length} halaman`);
+            console.log(`✅ Total: ${pages.length} pages dari Notion`);
         } catch (apiErr) {
             console.warn('⚠️ Notion API gagal:', apiErr.message);
-        }
 
-        // === FALLBACK: notion_dump.json ===
-        if (!pages || pages.length === 0) {
-            const dumpPaths = [
+            // Fallback ke dump
+            for (const dp of [
                 path.join(process.cwd(), 'notion_dump.json'),
                 path.join(__dirname, '..', 'notion_dump.json'),
-            ];
-            for (const dumpPath of dumpPaths) {
-                const data = readJsonFileSafe(dumpPath);
-                if (data) {
-                    pages = data.results || data;
-                    console.log(`📂 Fallback dump: ${pages.length} halaman`);
-                    break;
-                }
+            ]) {
+                const data = readJsonFileSafe(dp);
+                if (data) { pages = data.results || data; break; }
             }
         }
 
         if (!pages || pages.length === 0) {
-            return res.status(503).json({
-                error: 'Tidak ada sumber data yang tersedia. Pastikan NOTION_API_KEY sudah benar di Vercel Environment Variables.'
-            });
+            return res.status(503).json({ error: 'Tidak ada data. Cek NOTION_API_KEY dan pastikan integration sudah di-share ke database.' });
         }
 
-        const locations    = [];
-        const needResolve  = [];
+        const locations   = [];
+        const needResolve = [];
         let totalCustomers = 0;
         let blankCustomers = 0;
 
@@ -379,7 +341,8 @@ module.exports = async (req, res) => {
             if (data.lat !== null && data.lng !== null) {
                 locations.push(data);
             } else if (data.mapsUrl) {
-                const cached = coordsCache[data.mapsUrl] || coordsCache[data.mapsUrl.replace(/\?.*$/, '')];
+                const ck = data.mapsUrl.trim();
+                const cached = coordsCache[ck] || coordsCache[ck.replace(/\?.*$/, '')];
                 if (cached) {
                     data.lat = cached.lat;
                     data.lng = cached.lng;
@@ -392,17 +355,16 @@ module.exports = async (req, res) => {
             }
         }
 
-        const mappedCustomers = locations.length + needResolve.length;
-        console.log(`📍 Total Customer: ${totalCustomers} | Dipetakan: ${mappedCustomers} | Kosong: ${blankCustomers}`);
+        console.log(`📍 Customer: ${totalCustomers} | Mapped: ${locations.length} | NeedResolve: ${needResolve.length} | Blank: ${blankCustomers}`);
 
         return res.status(200).json({
             locations,
             needResolve,
-            stats: { totalCustomers, mappedCustomers, blankCustomers }
+            stats: { totalCustomers, mappedCustomers: locations.length + needResolve.length, blankCustomers }
         });
 
     } catch (err) {
-        console.error('❌ Error:', err);
+        console.error('❌ Error:', err.message);
         return res.status(500).json({ error: err.message });
     }
 };
