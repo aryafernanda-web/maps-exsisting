@@ -616,14 +616,38 @@ async function loadData(silent = false) {
 
     let data;
     try {
-        // Coba API serverless (langsung ke Notion API)
-        const resp = await fetch(`${API_BASE}/api/notion`, {
-            signal: AbortSignal.timeout(25000)
-        });
-        if (!resp.ok) throw new Error(`API HTTP ${resp.status}`);
-        data = await resp.json();
-        if (data.error) throw new Error(data.error);
-        console.log('✅ Data dari Notion API (via serverless)');
+        // Ambil per batch (hindari timeout Vercel 10 detik)
+        let notionCursor = '';
+        let merged = { locations: [], needResolve: [], stats: { totalCustomers: 0, mappedCustomers: 0, blankCustomers: 0 } };
+        let batchNum = 0;
+
+        do {
+            const url = notionCursor
+                ? `${API_BASE}/api/notion?notionCursor=${encodeURIComponent(notionCursor)}`
+                : `${API_BASE}/api/notion`;
+            if (!silent) {
+                loaderSub.textContent = batchNum === 0
+                    ? 'Menghubungkan ke Notion API...'
+                    : `Memuat batch ${batchNum + 1}... (${merged.locations.length} lokasi)`;
+            }
+            const resp = await fetch(url, { signal: AbortSignal.timeout(25000) });
+            if (!resp.ok) throw new Error(`API HTTP ${resp.status}`);
+            const chunk = await resp.json();
+            if (chunk.error) throw new Error(chunk.error);
+
+            merged.locations.push(...(chunk.locations || []));
+            merged.needResolve.push(...(chunk.needResolve || []));
+            if (chunk.stats) {
+                merged.stats.totalCustomers += chunk.stats.totalCustomers || 0;
+                merged.stats.blankCustomers += chunk.stats.blankCustomers || 0;
+            }
+            notionCursor = chunk.hasMore ? (chunk.notionCursor || '') : '';
+            batchNum++;
+        } while (notionCursor);
+
+        merged.stats.mappedCustomers = merged.locations.length + merged.needResolve.length;
+        data = merged;
+        console.log(`✅ Data dari Notion API (${batchNum} batch)`);
     } catch (apiErr) {
         // Fallback: baca langsung dari notion_dump.json
         console.warn('⚠️ API gagal, fallback ke notion_dump.json:', apiErr.message);

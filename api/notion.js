@@ -267,8 +267,48 @@ async function fetchNotionPage(cursor) {
 
 // ── Cache In-Memory (kurangi panggilan Notion) ─────────────────
 let cachedPages = null;
+let cacheBuildPages = [];
 let lastCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 menit
+
+function processPagesToResult(pages) {
+    const locations = [];
+    const needResolve = [];
+    let totalCustomers = 0;
+    let blankCustomers = 0;
+
+    for (const page of pages) {
+        const data = processPage(page);
+        if (!isCustomer(data)) continue;
+        totalCustomers++;
+
+        if (data.lat !== null && data.lng !== null) {
+            locations.push(data);
+        } else if (data.mapsUrl) {
+            const ck = data.mapsUrl.trim();
+            const cached = coordsCache[ck] || coordsCache[ck.replace(/\?.*$/, '')];
+            if (cached) {
+                data.lat = cached.lat;
+                data.lng = cached.lng;
+                locations.push(data);
+            } else {
+                needResolve.push(data);
+            }
+        } else {
+            blankCustomers++;
+        }
+    }
+
+    return {
+        locations,
+        needResolve,
+        stats: {
+            totalCustomers,
+            mappedCustomers: locations.length + needResolve.length,
+            blankCustomers,
+        },
+    };
+}
 
 // ── Main Handler ──────────────────────────────────────────────
 module.exports = async (req, res) => {
@@ -305,76 +345,66 @@ module.exports = async (req, res) => {
         }
     }
 
-    // ── GET: Ambil data Notion ────────────────────────────────
+    // ── GET: Ambil data Notion (per batch agar tidak timeout di Vercel) ──
     try {
-        // Cek apakah ada parameter page untuk pagination client-side
-        const pageParam = parseInt(req.query?.page || '0');
-        const PAGE_SIZE = 100; // berapa baris per request
+        const notionCursor = req.query?.notionCursor || '';
+        const now = Date.now();
 
-        console.log('🌐 Fetching Notion...');
-        let pages = null;
+        // Cache penuh masih valid → kirim semua sekaligus
+        if (cachedPages && (now - lastCacheTime < CACHE_TTL)) {
+            console.log('⚡ Data dari cache in-memory');
+            const result = processPagesToResult(cachedPages);
+            return res.status(200).json({ ...result, hasMore: false });
+        }
+
+        let batchPages = null;
+        let nextCursor = null;
 
         try {
-            const now = Date.now();
-            if (cachedPages && (now - lastCacheTime < CACHE_TTL)) {
-                console.log('⚡ Data dari cache in-memory');
-                pages = cachedPages;
-            } else {
-                pages = await fetchAllNotionPages();
-                console.log(`✅ Total: ${pages.length} pages dari Notion`);
-                cachedPages = pages;
+            const apiRes = await fetchNotionPage(notionCursor || undefined);
+            batchPages = apiRes.results || [];
+            nextCursor = apiRes.has_more ? apiRes.next_cursor : null;
+
+            cacheBuildPages = notionCursor ? cacheBuildPages.concat(batchPages) : batchPages;
+            if (!nextCursor) {
+                cachedPages = cacheBuildPages;
                 lastCacheTime = now;
+                cacheBuildPages = [];
+                console.log(`✅ Cache lengkap: ${cachedPages.length} halaman Notion`);
+            } else {
+                console.log(`📄 Batch Notion: ${batchPages.length} baris, lanjut...`);
             }
         } catch (apiErr) {
             console.warn('⚠️ Notion API gagal:', apiErr.message);
-
-            // Fallback ke dump
-            for (const dp of [
-                path.join(process.cwd(), 'notion_dump.json'),
-                path.join(__dirname, '..', 'notion_dump.json'),
-            ]) {
-                const data = readJsonFileSafe(dp);
-                if (data) { pages = data.results || data; break; }
-            }
-        }
-
-        if (!pages || pages.length === 0) {
-            return res.status(503).json({ error: 'Tidak ada data. Cek NOTION_API_KEY dan pastikan integration sudah di-share ke database.' });
-        }
-
-        const locations   = [];
-        const needResolve = [];
-        let totalCustomers = 0;
-        let blankCustomers = 0;
-
-        for (const page of pages) {
-            const data = processPage(page);
-            if (!isCustomer(data)) continue;
-            totalCustomers++;
-
-            if (data.lat !== null && data.lng !== null) {
-                locations.push(data);
-            } else if (data.mapsUrl) {
-                const ck = data.mapsUrl.trim();
-                const cached = coordsCache[ck] || coordsCache[ck.replace(/\?.*$/, '')];
-                if (cached) {
-                    data.lat = cached.lat;
-                    data.lng = cached.lng;
-                    locations.push(data);
-                } else {
-                    needResolve.push(data);
+            if (!notionCursor) {
+                for (const dp of [
+                    path.join(process.cwd(), 'notion_dump.json'),
+                    path.join(__dirname, '..', 'notion_dump.json'),
+                ]) {
+                    const data = readJsonFileSafe(dp);
+                    if (data) {
+                        const pages = data.results || data;
+                        const result = processPagesToResult(pages);
+                        return res.status(200).json({ ...result, hasMore: false });
+                    }
                 }
-            } else {
-                blankCustomers++;
             }
+            return res.status(503).json({
+                error: 'Tidak ada data. Cek NOTION_API_KEY dan pastikan integration sudah di-share ke database.',
+            });
         }
 
-        console.log(`📍 Customer: ${totalCustomers} | Mapped: ${locations.length} | NeedResolve: ${needResolve.length} | Blank: ${blankCustomers}`);
+        if (!batchPages.length && !nextCursor) {
+            return res.status(503).json({ error: 'Database Notion kosong atau tidak ada akses.' });
+        }
+
+        const result = processPagesToResult(batchPages);
+        console.log(`📍 Batch: ${result.stats.totalCustomers} customer, ${result.locations.length} mapped`);
 
         return res.status(200).json({
-            locations,
-            needResolve,
-            stats: { totalCustomers, mappedCustomers: locations.length + needResolve.length, blankCustomers }
+            ...result,
+            hasMore: !!nextCursor,
+            notionCursor: nextCursor || null,
         });
 
     } catch (err) {
