@@ -417,7 +417,22 @@ async function loadCoverageKML(silent = false) {
         }
         if (!silent) setStatus('success', `${allData.length} Pelanggan`, 'person_pin_circle');
     } catch (err) {
-        console.warn('Coverage KML gagal:', err);
+        console.warn('Coverage KML API gagal, coba coverage.kml lokal:', err.message);
+        try {
+            const local = await fetch(`${API_BASE}/coverage.kml`, { signal: AbortSignal.timeout(10000) });
+            if (local.ok) {
+                const kmlText = await local.text();
+                if (coverageLayer) map.removeLayer(coverageLayer);
+                coverageLayer = parseKMLToLayer(kmlText);
+                if (coverageLayer) {
+                    map.addLayer(coverageLayer);
+                    coverageVisible = true;
+                    toggleCovBtn.classList.add('active');
+                }
+                if (!silent) setStatus('success', `${allData.length} Pelanggan`, 'person_pin_circle');
+                return;
+            }
+        } catch (_) { /* ignore */ }
         if (!silent) setStatus('error', 'Coverage gagal', 'error');
     }
 }
@@ -562,8 +577,9 @@ async function loadFromDump() {
 
     for (const page of pages) {
         const data = processNotionPage(page);
-        const isCustomer = data.status.toLowerCase().includes('costumer') ||
-                           data.status.toLowerCase().includes('customer');
+        const s = (data.status || '').toLowerCase().trim();
+        const isCustomer = s.includes('costumer') || s.includes('customer') ||
+                           s === 'aktif' || s === 'active';
         if (!isCustomer) continue;
         totalCustomers++;
 
@@ -662,7 +678,7 @@ async function loadData(silent = false) {
             for (let i = 0; i < needResolve.length; i += BATCH_SIZE) {
                 const batch = needResolve.slice(i, i + BATCH_SIZE);
                 try {
-                    const res = await fetch('/api/notion', {
+                    const res = await fetch(`${API_BASE}/api/notion`, {
                         method:  'POST',
                         body:    JSON.stringify(batch),
                         headers: { 'Content-Type': 'application/json' },

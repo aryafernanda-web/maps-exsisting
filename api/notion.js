@@ -265,12 +265,18 @@ async function fetchNotionPage(cursor) {
     }
 }
 
+// ── Cache In-Memory (kurangi panggilan Notion) ─────────────────
+let cachedPages = null;
+let lastCacheTime = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 menit
+
 // ── Main Handler ──────────────────────────────────────────────
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
     if (req.method === 'OPTIONS') return res.status(204).end();
+    if (req.method === 'HEAD') return res.status(200).end();
 
     if (!NOTION_API_KEY) {
         return res.status(500).json({
@@ -309,8 +315,16 @@ module.exports = async (req, res) => {
         let pages = null;
 
         try {
-            pages = await fetchAllNotionPages();
-            console.log(`✅ Total: ${pages.length} pages dari Notion`);
+            const now = Date.now();
+            if (cachedPages && (now - lastCacheTime < CACHE_TTL)) {
+                console.log('⚡ Data dari cache in-memory');
+                pages = cachedPages;
+            } else {
+                pages = await fetchAllNotionPages();
+                console.log(`✅ Total: ${pages.length} pages dari Notion`);
+                cachedPages = pages;
+                lastCacheTime = now;
+            }
         } catch (apiErr) {
             console.warn('⚠️ Notion API gagal:', apiErr.message);
 

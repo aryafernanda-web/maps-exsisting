@@ -6,7 +6,6 @@ node_modules/
 cache_maps.json
 status.json
 .node/
-dev-server.js
 
 # Cache files
 coords_cache.json
@@ -18,6 +17,8 @@ all_maps.txt
 
 # File test & debug
 test_maps_html.html
+test_new_key.js
+test_out.txt
 debug_notion.js
 
 # Script utility lokal (tidak dibutuhkan di server)
@@ -29,3 +30,5 @@ resolve_html.ps1
 resolve_missing.ps1
 resolve_missing2.ps1
 resolve_urls.ps1
+
+.vercel

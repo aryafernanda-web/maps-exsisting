@@ -1,27 +1,40 @@
 @echo off
+cd /d "%~dp0"
 echo ==========================================
-echo   Fiber Customer Maps - Vercel Deployer
+echo   Fiber Customer Maps - Deploy ke Vercel
 echo ==========================================
 echo.
 
-REM Cek apakah Node.js terinstall
 node -v >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js tidak ditemukan! 
-    echo Silakan download dan install Node.js dari: https://nodejs.org/
+    echo PC ini TIDAK punya Node.js - itu tidak masalah.
+    echo.
+    echo Cara deploy tanpa Node.js di PC:
+    echo   1. Upload folder ini ke GitHub ^(GitHub Desktop atau upload di browser^)
+    echo   2. Buka https://vercel.com - Import project dari GitHub
+    echo   3. Set Environment Variables:
+    echo        NOTION_API_KEY      = API key Notion Anda
+    echo        NOTION_DATABASE_ID  = ID database Notion
+    echo   4. Deploy
+    echo.
+    echo Panduan lengkap: buka file DEPLOY_VERCEL.md
+    echo.
+    start "" DEPLOY_VERCEL.md 2>nul
     pause
-    exit /b
+    exit /b 0
 )
 
-echo [1/3] Menginstall dependencies...
+echo Node.js terdeteksi - deploy via CLI opsional.
+echo Untuk deploy tanpa CLI, tetap gunakan DEPLOY_VERCEL.md ^(GitHub + Vercel web^).
+echo.
+set /p LANJUT="Jalankan npx vercel --prod sekarang? (Y/N): "
+if /i not "%LANJUT%"=="Y" (
+    echo Dibatalkan. Baca DEPLOY_VERCEL.md untuk deploy via browser.
+    pause
+    exit /b 0
+)
+
 call npm install
-
-echo [2/3] Mencoba deploy ke Vercel...
-echo Pastikan Anda sudah login ke Vercel (npx vercel login).
-echo.
 call npx vercel --prod
-
 echo.
-echo [3/3] Selesai! 
-echo Jika berhasil, URL website Anda akan muncul di atas.
 pause

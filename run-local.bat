@@ -1,4 +1,12 @@
 @echo off
+cd /d "%~dp0"
 echo Starting local development server...
-".node\node-v22.13.0-win-x64\node.exe" dev-server.js
+if exist .env.local goto run
+if not exist .env (
+    echo.
+    echo PERINGATAN: File .env belum ada. Salin .env.example ke .env lalu isi NOTION_API_KEY.
+    echo.
+)
+:run
+npm run local
 pause
