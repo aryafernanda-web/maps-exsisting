@@ -213,9 +213,11 @@ function processPage(page) {
     return data;
 }
 
-function isCustomer(data) {
+function isProspek(data) {
     const s = (data.status || '').toLowerCase().trim();
-    return s.includes('costumer') || s.includes('customer') || s === 'aktif' || s === 'active';
+    // Tampilkan hanya status Cold, Warm, Hot
+    // TIDAK tampilkan: Costumer, Terminate, Deal
+    return s === 'cold' || s === 'warm' || s === 'hot';
 }
 
 // ── Fetch Notion dengan pagination PARALEL ────────────────────
@@ -279,7 +281,7 @@ function processPagesToResult(pages) {
 
     for (const page of pages) {
         const data = processPage(page);
-        if (!isCustomer(data)) continue;
+        if (!isProspek(data)) continue;
         totalCustomers++;
 
         if (data.lat !== null && data.lng !== null) {

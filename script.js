@@ -578,9 +578,9 @@ async function loadFromDump() {
     for (const page of pages) {
         const data = processNotionPage(page);
         const s = (data.status || '').toLowerCase().trim();
-        const isCustomer = s.includes('costumer') || s.includes('customer') ||
-                           s === 'aktif' || s === 'active';
-        if (!isCustomer) continue;
+        const isProspek = s === 'cold' || s === 'warm' || s === 'hot';
+        // TIDAK tampilkan: Costumer, Terminate, Deal
+        if (!isProspek) continue;
         totalCustomers++;
 
         if (data.lat !== null && data.lng !== null) {
